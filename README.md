@@ -1,1 +1,1 @@
-# Auto-coloring from gray images
+# Auto-coloring for gray images
