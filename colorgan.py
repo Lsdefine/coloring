@@ -87,7 +87,7 @@ fake = modelG(imageA)
 disG = modelD(fake)
 regray = Lambda(ConvGray, output_shape=lambda d:d[:-1]+(1,))(fake)
 combM = Model(inputs=imageA, outputs=[disG, fake, regray])
-combM.compile(optimizer=Adam(adam_lr, adam_beta_1), loss=['mse', 'mae', 'mae'], loss_weight=[1,p_beta_weight,p_gray])
+combM.compile(optimizer=Adam(adam_lr, adam_beta_1), loss=['mse', 'mae', 'mae'], loss_weights=[1,p_beta_weight,p_gray])
 
 def ImgGenerator(imgdir):
 	cache = []
