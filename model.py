@@ -7,23 +7,25 @@ import keras.backend as K
 import tensorflow as tf
 
 
-
-# batch_size=1, InstNorm = BatchNorm?
 def InstanceNorm(x):
 	mean, var = tf.nn.moments(x, axes=[1,2])
-	epsilon = 1e-5
-	return (x - mean) * tf.rsqrt(var + epsilon)
+	return (x - mean) * tf.rsqrt(var + 1e-7)
 
 def ReflectPad(x, ks=1):
 	return tf.pad(x, [[0,0],[ks,ks],[ks,ks],[0,0]], "REFLECT")
 
-def ResBlock(x, dim):
-	y = Lambda(ReflectPad)(x)
-	y = Conv2D(dim, 3, padding='valid')(y)
-	y = LeakyReLU()(y)
-	y = Lambda(ReflectPad)(y)
-	y = Conv2D(dim, 3, padding='valid')(y)
-	y = LeakyReLU()(y)
+def selu(x):
+	alpha = 1.6732632423543772848170429916717
+	scale = 1.0507009873554804934193349852946
+	return scale*tf.where(x>=0.0, x, alpha*K.elu(x))
+
+def ResBlock(y, dim):
+	x = Lambda(ReflectPad)(y)
+	x = Conv2D(dim, 3, padding='valid')(x)
+	x = LeakyReLU()(x)
+	x = Lambda(ReflectPad)(x)
+	x = Conv2D(dim, 3, padding='valid')(x)
+	x = LeakyReLU()(x)
 	return add([x,y])
 
 def ResizeConv(x, cdim):
@@ -38,47 +40,42 @@ def ResizeConv(x, cdim):
 	x = Conv2D(cdim, 3, padding='valid')(x)
 	return x
 
-def BuildGenerator(imgsize=128):
-	gdim = 32
-	image = Input(shape=(imgsize,imgsize,1))
-	x = Lambda(lambda x:ReflectPad(x,3))(image)
+def BuildGenerator(img):
+	gdim = 40
+	x = Lambda(lambda x:ReflectPad(x,3))(img)
 	x = Conv2D(gdim,   7, strides=1, padding='valid')(x)
-	x = BatchNormalization()(x)
 	x = LeakyReLU()(x)
 	x = Lambda(lambda x:ReflectPad(x,1))(x)
 	x = Conv2D(gdim*2, 3, strides=2, padding='valid')(x)
-	x = BatchNormalization()(x)
 	x = LeakyReLU()(x)
 	x = Lambda(lambda x:ReflectPad(x,1))(x)
 	x = Conv2D(gdim*4, 3, strides=2, padding='valid')(x)
-	x = BatchNormalization()(x)
 	x = LeakyReLU()(x)
-	for ii in range(6): x = ResBlock(x, gdim*4)
+	for ii in range(9): x = ResBlock(x, gdim*4)
 	x = ResizeConv(x, gdim*2)
-	x = BatchNormalization()(x)
 	x = LeakyReLU()(x)
 	x = ResizeConv(x, gdim)
-	x = BatchNormalization()(x)
 	x = LeakyReLU()(x)
 	x = Lambda(lambda x:ReflectPad(x,1))(x)
 	x = Conv2D(3, 3, strides=1, padding='valid', activation='tanh')(x)
-	return Model(inputs=image, outputs=x)
+	return Model(inputs=img, outputs=x)
 
-def BuildDiscriminator(imgsize=128):
-	cnn = Sequential()
+def BuildDiscriminator(img):
 	ddim = 64
-	cnn.add(Conv2D(ddim, 7, padding='same', strides=2, input_shape=(imgsize,imgsize,3)))
-	cnn.add(BatchNormalization())
-	cnn.add(LeakyReLU())
-	cnn.add(Conv2D(ddim*2, 3, padding='same', strides=2))
-	cnn.add(BatchNormalization())
-	cnn.add(LeakyReLU())
-	cnn.add(Conv2D(ddim*4, 3, padding='same', strides=2))
-	cnn.add(BatchNormalization())
-	cnn.add(LeakyReLU())
-	cnn.add(Conv2D(ddim*8, 3, padding='same', strides=1))
-	cnn.add(BatchNormalization())
-	cnn.add(LeakyReLU()) 
-	cnn.add(Conv2D(1, 3, padding='same', strides=1))
-	image = Input(shape=(imgsize,imgsize,3))
-	return Model(inputs=image, outputs=cnn(image))
+	x = Conv2D(ddim, 7, padding='same', strides=2)(img)
+	x = Lambda(InstanceNorm)(x)
+	x = LeakyReLU()(x)
+	x = Conv2D(ddim*2, 3, padding='same', strides=2)(x)
+	x = Lambda(InstanceNorm)(x)
+	x = LeakyReLU()(x)
+	x = Conv2D(ddim*4, 3, padding='same', strides=2)(x)
+	x = Lambda(InstanceNorm)(x)
+	x = LeakyReLU()(x)
+	x = Conv2D(ddim*8, 3, padding='same', strides=2)(x)
+	x = Lambda(InstanceNorm)(x)
+	x = LeakyReLU()(x)
+	x = Conv2D(ddim*8, 3, padding='same', strides=1)(x)
+	x = Lambda(InstanceNorm)(x)
+	x = LeakyReLU()(x)
+	x = Conv2D(1, 3, padding='same', strides=1)(x)
+	return Model(inputs=img, outputs=x)
