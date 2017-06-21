@@ -9,6 +9,7 @@ from keras.optimizers import Adam
 from keras.models import *
 from keras.layers import *
 from keras.preprocessing import image
+from keras.utils import data_utils
 from PIL import Image
 import cv2
 time.clock()
@@ -28,7 +29,7 @@ p_diff = 1
 channels = 3
 imgsize = 256
 
-adam_lr = 0.00005
+adam_lr = 0.000002
 adam_beta_1 = 0.5
 
 imgdirA     = '/mnt/smb25/ImageNet/erciyuan/train'
@@ -171,6 +172,22 @@ def ImgGeneratorS(imgdir):
 gen     = ImgGenerator(imgdirA)
 testgen = ImgGeneratorS(testimgdirA)
 
+import queue, threading
+dqueue = queue.Queue()
+
+def QueuePut():
+	while True:
+		if dqueue.qsize() < 5000: dqueue.put(next(gen))
+		else: time.sleep(0.5)
+threading._start_new_thread(QueuePut, tuple())
+def QueueGet():
+	while True:
+		if not dqueue.empty():
+			ret = dqueue.get()
+			yield ret
+		else: time.sleep(0.5)
+syncgen = QueueGet()
+
 #nb_batches = len(os.listdir(imgdirA)) // batch_size
 nb_batches = 999
 ones  = np.ones(  (batch_size, imgsize//16, imgsize//16, 1) )
@@ -182,12 +199,12 @@ for epoch in range(nb_epochs):
 	print('Epoch %d of %d' % (epoch, nb_epochs))
 	
 	D_iter = 1;  G_iter = 1;
-	if epoch > 20: D_iter = 7; G_iter = 3
+	if epoch > 0: D_iter = 7; G_iter = 3
 	progress_bar = Progbar(target=nb_batches*(G_iter+D_iter))
 	iter = 1
 	for index in range(nb_batches):
 		for _ in range(D_iter):
-			gimg, cimg = next(gen)
+			gimg, cimg = next(syncgen)
 			generate = modelG.predict_on_batch(gimg)
 			record.append(generate)
 			if len(record) > 100: record = record[-50:]
@@ -196,14 +213,13 @@ for epoch in range(nb_epochs):
 			iter += 1
 
 		for _ in range(G_iter):
-			gimg, cimg = next(gen)
+			gimg, cimg = next(syncgen)
 			__, lossG, lossR, lossGray, lossDiff = combM.train_on_batch(gimg, [ones, cimg, gimg, np.zeros((batch_size, 1))])
 			progress_bar.update(iter, values=[('G',lossG),('R',lossR),('Gray',lossGray),('Diff',lossDiff)])
 			iter += 1
-
 	
-	p_recon = np.clip(p_recon * 0.9, 1, 10)
-	K.set_value(p_recon_weight, p_recon)
+	#p_recon = np.clip(p_recon * 0.9, 1, 10)
+	#K.set_value(p_recon_weight, p_recon)
 
 	print('Testing for epoch {}:'.format(epoch))
 	print('p_recon=%.3f' % p_recon)
