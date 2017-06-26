@@ -6,7 +6,7 @@ loss: GAN + cyc-to-origimage + cyc-to-gray + neighbor-pixel-diff
 
 A small lr.
 
-Original GAN is better (no WGAN).
+WGAN-GP.
 
 Use InstNorm instead of BatchNorm.
 
