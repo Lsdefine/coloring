@@ -1,4 +1,4 @@
-import ljqpy, os, sys, time, random
+﻿import ljqpy, os, sys, time, random
 import numpy as np
 import keras.backend as K
 from collections import defaultdict
@@ -28,7 +28,7 @@ channels = 3
 imgsize = 256
 
 modeldir = 'data/'
-testimgdir = 'images/'
+testimgdir = 'predict/'
 
 imgdirA     = '/mnt/smb25/ImageNet/erciyuan/train'
 testimgdirA = '/mnt/smb25/ImageNet/erciyuan/test'
@@ -36,15 +36,19 @@ testimgdirA = '/mnt/smb25/ImageNet/erciyuan/test'
 
 def Predict(fn):
 	img = cv2.cvtColor(cv2.imread(fn), cv2.COLOR_BGR2RGB)
+	w, h = img.shape[1], img.shape[0]
+	ratio = 1
+	if w > 1000 and h > 1000: ratio = 0.5
+	img = cv2.resize(img, (int(w*ratio+.5), int(h*ratio+.5)))
 	gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 	gray = np.expand_dims(np.expand_dims(gray, 0), 3)
-	gray = (gray - 127.5) / 127.5
+	gray = (gray - 0) / 255
 	iimg = Input(shape=(gray.shape[1], gray.shape[2], 1))
 	modelG = BuildGenerator(iimg)
 	modelG.load_weights(os.path.join(modeldir, 'modelG.h5'))
 	modelG.compile(optimizer='adam', loss='mse')
 	ret = modelG.predict(gray)[0]
-	ret = (ret * 127.5 + 127.5).astype(np.uint8)
+	ret = (ret * 255).astype(np.uint8)
 	Image.fromarray(ret).save(os.path.join(testimgdir, 'pre_'+fn.split('/')[-1]))
 
 
@@ -55,3 +59,4 @@ def PredictDir(dir):
 		Predict(fn)
 
 PredictDir(testimgdirA)
+Predict('predict/002.jpg')

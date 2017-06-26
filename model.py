@@ -74,7 +74,7 @@ def BuildGenerator(img):
 	x = ResizeConv(x, gdim)
 	x = LeakyReLU()(x)
 	x = Lambda(lambda x:ReflectPad(x,1))(x)
-	x = Conv2D(3, 3, strides=1, padding='valid', activation='tanh')(x)
+	x = Conv2D(3, 3, strides=1, padding='valid', activation='sigmoid')(x)
 	return Model(inputs=img, outputs=x)
 
 def BuildDiscriminator(img):

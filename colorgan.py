@@ -19,18 +19,19 @@ K.set_image_dim_ordering('tf')
 from model import BuildGenerator, BuildDiscriminator
 
 # params
-nb_epochs = 100
+nb_epochs = 200
 batch_size = 1
 p_wgangp = 10
-p_recon = 10
-p_gray = 10
+p_recon = 1
+p_gray = 1
 p_diff = 1
 
 channels = 3
 imgsize = 256
 
-adam_lr = 0.000002
+adam_lr = 0.0001
 adam_beta_1 = 0.5
+adam_beta_2 = 0.9
 
 imgdirA     = '/mnt/smb25/ImageNet/erciyuan/train'
 testimgdirA = '/mnt/smb25/ImageNet/erciyuan/test'
@@ -45,17 +46,18 @@ def imgloss(y_true, y_pred):
 	return K.mean(diff)
 
 def RLinearMerge(x):
-	alpha = np.random.uniform(0,1,(batch_size,1))
+	alpha = K.random_uniform((batch_size,1,1,1))
 	return x[0] + alpha * (x[1]-x[0])
 
 def GradientsPenalty(x):
 	grads = K.gradients( x[1], [x[0]] )[0]
-	slopes = K.sqrt(K.sum(K.square(grads), axis=-1))
+	grads = K.batch_flatten(grads)
+	slopes = K.sqrt(K.sum(K.square(grads), axis=1)+1e-7)
 	gradp = K.mean((slopes - 1.)**2)
 	return gradp
 
-def wloss(y_true, y_pred):
-	return - K.clip(K.mean(y_pred), -50, 50)
+def wloss(y_true, y_pred): return - K.mean(y_pred)
+def oloss(y_true, y_pred): return K.mean(y_pred)
 
 img = Input(shape=(imgsize,imgsize,1))
 modelG = BuildGenerator(img)
@@ -70,17 +72,17 @@ except Exception as e:
 	modelG.summary()
 	modelD.summary()
 
-modelD.compile(optimizer=Adam(adam_lr, adam_beta_1), loss='mse')
-modelG.compile(optimizer=Adam(adam_lr, adam_beta_1), loss='mse')
+modelD.compile(optimizer='adam', loss='mse')
+modelG.compile(optimizer='adam', loss='mse')
 
 imageReal = Input(shape=(imgsize,imgsize,channels))
 imageFake = Input(shape=(imgsize,imgsize,channels))
 DReal = modelD(imageReal)
 DFake = modelD(imageFake)
-#inter = merge([imageReal, imageFake], mode=RLinearMerge, output_shape=lambda d:d[0])
-#gradp = merge([inter, modelD(inter)], mode=GradientsPenalty, output_shape=lambda d:(d[0],1))
-combD = Model(inputs=[imageReal, imageFake], outputs=[DReal, DFake])
-combD.compile(optimizer=Adam(adam_lr, adam_beta_1), loss=['mse', 'mse'], loss_weights=[1, 1])
+inter = merge([imageReal, imageFake], mode=RLinearMerge, output_shape=lambda d:d[0])
+gradp = merge([inter, modelD(inter)], mode=GradientsPenalty, output_shape=lambda d:(d[0],1))
+combD = Model(inputs=[imageReal, imageFake], outputs=[DReal, DFake, gradp])
+combD.compile(optimizer=Adam(adam_lr, adam_beta_1, adam_beta_2), loss=[wloss, wloss, oloss], loss_weights=[1, -1, p_wgangp])
 
 p_recon_weight = K.variable(p_recon)
 
@@ -104,14 +106,14 @@ diffX = merge([difffakeX, diffgrayX], mode=lambda d:K.mean(K.relu(d[0]-d[1])), o
 diffY = merge([difffakeY, diffgrayY], mode=lambda d:K.mean(K.relu(d[0]-d[1])), output_shape=lambda d:(d[0][0], 1))
 diff = add([diffX, diffY])
 combM = Model(inputs=imageA, outputs=[disG, fake, regray, diff])
-combM.compile(optimizer=Adam(adam_lr, adam_beta_1), loss=['mse', imgloss, 'mae', 'mae'], loss_weights=[1,p_recon_weight,p_gray,p_diff])
+combM.compile(optimizer=Adam(adam_lr, adam_beta_1, adam_beta_2), loss=[wloss, imgloss, 'mae', oloss], loss_weights=[1,p_recon_weight,p_gray,p_diff])
 
 def ResizeRatio(w, h):
 	short, long = min(w, h), max(w, h)
 	mxx = short
-	if short > 1500: mxx = short // 3
-	elif short > 1000: mxx = short // 2
-	if short <= imgsize: mxx = imgsize + 10
+	if short > 2100: mxx = short // 3
+	elif short > 1200: mxx = short // 2
+	if short <= imgsize+5: mxx = imgsize + 10
 	if long >= short * 2.5: mxx = imgsize + 10
 	obj = random.randint(imgsize+5, mxx)
 	ratio = obj / short
@@ -130,17 +132,17 @@ def ImgGenerator(imgdir):
 				img = cv2.resize(img, (int(w*ratio+.5), int(h*ratio+.5)))
 				if random.random() < 0.4: img = img[:,::-1,:]
 				gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-				img, gray = img / 127.5 - 1, gray / 127.5 - 1
+				img, gray = img / 255.0 - 0, gray / 255.0 - 0
 				gray = np.expand_dims(np.expand_dims(gray, 0), 3)
 				img = np.expand_dims(img, 0)
 				cache.append( (gray, img) )
-				if len(cache) > 300:
+				if len(cache) > 400:
 					for ii in range(3000):
 						gimg, cimg = random.choice(cache)
 						px, py = random.randint(0, cimg.shape[1]-imgsize), random.randint(0, cimg.shape[2]-imgsize)
 						gx, cx = gimg[:,px:px+imgsize,py:py+imgsize,:], cimg[:,px:px+imgsize,py:py+imgsize,:] 
 						yield gx, cx
-					cache = cache[-3:]
+					cache = []
 			except Exception as e: 
 				print('bad file:', fn, e)
 
@@ -156,7 +158,7 @@ def ImgGeneratorS(imgdir):
 		img = cv2.resize(img, (int(w*ratio+.5), int(h*ratio+.5)))
 		if random.random() < 0.4: img = img[:,::-1,:]
 		gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-		img, gray = img / 127.5 - 1, gray / 127.5 - 1
+		img, gray = img / 255.0 - 0, gray / 255.0 - 0
 		gray = np.expand_dims(np.expand_dims(gray, 0), 3)
 		img = np.expand_dims(img, 0)
 		for ii in range(10):
@@ -194,12 +196,14 @@ ones  = np.ones(  (batch_size, imgsize//16, imgsize//16, 1) )
 zeros = np.zeros( (batch_size, imgsize//16, imgsize//16, 1) )
 
 record = []
-objD = [np.concatenate([ones]*batch_size,0), np.concatenate([zeros]*batch_size,0), np.zeros((batch_size,1))][:2]
+objD = [np.concatenate([ones]*batch_size,0), np.concatenate([zeros]*batch_size,0), np.zeros((batch_size,1))]
+lossD = lossG = 0
 for epoch in range(nb_epochs):
 	print('Epoch %d of %d' % (epoch, nb_epochs))
 	
-	D_iter = 1;  G_iter = 1;
-	if epoch > 0: D_iter = 7; G_iter = 3
+	D_iter = 5;  G_iter = 1;
+	#if epoch > 0: 
+	#	D_iter = 7; G_iter = 3
 	progress_bar = Progbar(target=nb_batches*(G_iter+D_iter))
 	iter = 1
 	for index in range(nb_batches):
@@ -207,8 +211,10 @@ for epoch in range(nb_epochs):
 			gimg, cimg = next(syncgen)
 			generate = modelG.predict_on_batch(gimg)
 			record.append(generate)
-			if len(record) > 100: record = record[-50:]
-			lossD = combD.train_on_batch([cimg, random.choice(record)], objD)[0]
+			if len(record) > 100: 
+				random.shuffle(record)
+				record = record[-50:]
+			lossD, lossReal, lossFake, lossGP = combD.train_on_batch([cimg, random.choice(record)], objD)
 			progress_bar.update(iter, values=[('D',lossD)])
 			iter += 1
 
@@ -218,13 +224,13 @@ for epoch in range(nb_epochs):
 			progress_bar.update(iter, values=[('G',lossG),('R',lossR),('Gray',lossGray),('Diff',lossDiff)])
 			iter += 1
 	
-	#p_recon = np.clip(p_recon * 0.9, 1, 10)
-	#K.set_value(p_recon_weight, p_recon)
+	p_recon = np.clip(p_recon * 0.9, 1, 10)
+	K.set_value(p_recon_weight, p_recon)
 
 	print('Testing for epoch {}:'.format(epoch))
 	print('p_recon=%.3f' % p_recon)
 	
-	if epoch % 4 == 3:
+	if epoch % 3 == 2:
 		lr =  K.get_value(combD.optimizer.lr) * 0.9
 		print('lr=%.8f' % lr)
 		K.set_value( combD.optimizer.lr, lr )
@@ -239,16 +245,15 @@ for epoch in range(nb_epochs):
 	tGray = np.concatenate( graytest, axis=0 ) 
 	tCol = np.concatenate( colortest, axis=0 ) 
 	tGen = modelG.predict(tGray, batch_size=1)
-	obj = [np.concatenate([ones]*numtest,0), np.concatenate([zeros]*numtest,0), np.zeros((numtest,1))][:2]
+	obj = [np.concatenate([ones]*numtest,0), np.concatenate([zeros]*numtest,0), np.zeros((numtest,1))]
 	dloss = combD.evaluate([tCol, tGen], obj, batch_size=1, verbose=0)
 	mloss = combM.evaluate(tGray, [obj[0], tCol, tGray, np.zeros((numtest, 1))], batch_size=1, verbose=0)
-	dloss += (0,)
-	print('lossReal=%.4f, lossFake=%.4f, lossGP=%.4f' % (dloss[1], dloss[2], dloss[3]))
-	print('lossG=%.4f, lossR=%.4f, lossGray=%.4f, lossDiff=%.4f' % (mloss[1], mloss[2], mloss[3], mloss[4]))
+	print('lossDall=%.4f lossReal=%.4f, lossFake=%.4f, lossGP=%.4f' % tuple(dloss))
+	print('lossGall=%.4f lossG=%.4f, lossR=%.4f, lossGray=%.4f, lossDiff=%.4f' % tuple(mloss))
 	tGray = np.repeat(tGray,3)
 	tGray = tGray.reshape(-1,imgsize,channels)
 	tCol = tCol.reshape(-1,imgsize,channels)
 	tGen = tGen.reshape(-1,imgsize,channels)
 	img = np.concatenate([tGray, tGen, tCol], axis=1)
-	img = (img * 127.5 + 127.5).astype(np.uint8)  
+	img = (img * 255 + 0).astype(np.uint8)  
 	Image.fromarray(img).save(os.path.join(testimgdir, 'plot_epoch_{0:03d}_generated.png'.format(epoch)))
